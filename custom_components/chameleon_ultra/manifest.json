@@ -1,0 +1,17 @@
+{
+  "domain": "chameleon_ultra",
+  "name": "ChameleonUltra NFC Emulator",
+  "version": "0.1.0",
+  "documentation": "https://github.com/jacobbrugh/hass-chameleon",
+  "issue_tracker": "https://github.com/jacobbrugh/hass-chameleon/issues",
+  "codeowners": ["@jacobbrugh"],
+  "dependencies": ["bluetooth"],
+  "requirements": ["bleak-retry-connector>=4.0.0"],
+  "config_flow": true,
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "bluetooth": [
+    { "local_name": "ChameleonUltra" },
+    { "local_name": "ChameleonLite" }
+  ]
+}

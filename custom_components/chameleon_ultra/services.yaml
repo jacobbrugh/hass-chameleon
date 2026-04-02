@@ -1,0 +1,27 @@
+load_dump:
+  name: Load NFC Dump
+  description: Load an NFC card dump file into a ChameleonUltra emulation slot
+  fields:
+    device_id:
+      name: Device
+      description: Target ChameleonUltra device
+      required: true
+      selector:
+        device:
+          integration: chameleon_ultra
+    file_path:
+      name: File Path
+      description: Path to dump file relative to HA config directory (.mfd, .bin, or .nfc)
+      required: true
+      example: "chameleon_ultra/dumps/front_door.mfd"
+      selector:
+        text:
+    slot:
+      name: Slot
+      description: Slot number (1-8, displayed as in the official app)
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 8
+          mode: slider

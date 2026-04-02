@@ -1,0 +1,34 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "ChameleonUltra",
+        "description": "Select a ChameleonUltra device to add.",
+        "data": {
+          "address": "Device"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "ChameleonUltra Discovered",
+        "description": "Do you want to set up {name}?"
+      }
+    },
+    "abort": {
+      "already_configured": "This device is already configured.",
+      "no_devices_found": "No ChameleonUltra devices found. Make sure the device is powered on and within Bluetooth range."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ChameleonUltra Options",
+        "data": {
+          "emulation_hold_time": "Emulation hold time (seconds)"
+        },
+        "data_description": {
+          "emulation_hold_time": "How long to keep NFC emulation active when the Unlock button is pressed. 3 seconds works well for most locks."
+        }
+      }
+    }
+  }
+}
