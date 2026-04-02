@@ -90,7 +90,7 @@ def _register_services(hass: HomeAssistant) -> None:
         # Resolve and validate file path
         resolved = Path(hass.config.path(file_path)).resolve()
         config_dir = Path(hass.config.path()).resolve()
-        if not str(resolved).startswith(str(config_dir)):
+        if not resolved.is_relative_to(config_dir):
             raise ValueError("File path must be within the HA config directory")
         if not resolved.is_file():
             raise FileNotFoundError(f"Dump file not found: {resolved}")
