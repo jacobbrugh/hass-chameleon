@@ -24,13 +24,16 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
+    CONF_PIN,
     DEFAULT_DISCONNECT_DELAY,
+    DEFAULT_PIN,
     DOMAIN,
     NUS_TX_CHAR_UUID,
     SLOT_COUNT,
     DeviceModel,
 )
 from .device import ChameleonTimeoutError, ChameleonUltraDevice
+from .pairing import async_is_paired, async_pair_with_pin
 from .protocol import ProtocolError
 
 _LOGGER = logging.getLogger(__name__)
@@ -92,6 +95,21 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not ble_device:
             raise UpdateFailed(
                 f"ChameleonUltra {self.address} not found in Bluetooth advertisements"
+            )
+
+        # Ensure the device is paired in BlueZ before attempting GATT connection
+        try:
+            if not await async_is_paired(self.address):
+                pin = self.config_entry.data.get(CONF_PIN, DEFAULT_PIN)
+                _LOGGER.info(
+                    "ChameleonUltra %s not paired — initiating BLE pairing", self.address
+                )
+                await async_pair_with_pin(self.address, pin)
+        except Exception as err:
+            _LOGGER.warning(
+                "BLE pairing attempt failed for %s: %s (will try connecting anyway)",
+                self.address,
+                err,
             )
 
         _LOGGER.debug("Connecting to ChameleonUltra %s", self.address)

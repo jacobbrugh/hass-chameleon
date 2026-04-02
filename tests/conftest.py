@@ -23,8 +23,20 @@ for mod in [
     "bleak.backends",
     "bleak.backends.device",
     "bleak_retry_connector",
+    "dbus_fast",
+    "dbus_fast.aio",
+    "dbus_fast.constants",
+    "dbus_fast.service",
 ]:
     _ensure_mock(mod)
+
+# dbus_fast.service needs real decorators for class construction
+dbus_service = sys.modules["dbus_fast.service"]
+dbus_service.ServiceInterface = type("ServiceInterface", (), {"__init__": lambda self, name: None})
+dbus_service.method = lambda **kw: (lambda f: f)  # identity decorator
+
+dbus_constants = sys.modules["dbus_fast.constants"]
+dbus_constants.BusType = type("BusType", (), {"SYSTEM": 0})
 
 # Mock homeassistant and all submodules used by the integration
 _ha_mods = [
@@ -59,6 +71,7 @@ ha_const.PERCENTAGE = "%"
 vol = sys.modules["voluptuous"]
 vol.Schema = MagicMock
 vol.Required = MagicMock
+vol.Optional = MagicMock
 vol.In = MagicMock
 vol.All = MagicMock
 vol.Coerce = MagicMock

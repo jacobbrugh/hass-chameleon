@@ -3,14 +3,24 @@
     "step": {
       "user": {
         "title": "ChameleonUltra",
-        "description": "Select a ChameleonUltra device to add.",
+        "description": "Select a ChameleonUltra device to add. Hold the A button on the device before submitting.",
         "data": {
-          "address": "Device"
+          "address": "Device",
+          "pin": "BLE pairing PIN"
+        },
+        "data_description": {
+          "pin": "6-digit BLE pairing PIN. Default is 123456. Leave blank if pairing is disabled on the device."
         }
       },
       "bluetooth_confirm": {
         "title": "ChameleonUltra Discovered",
-        "description": "Do you want to set up {name}?"
+        "description": "Found {name}. Hold the A button on the device before submitting.",
+        "data": {
+          "pin": "BLE pairing PIN"
+        },
+        "data_description": {
+          "pin": "6-digit BLE pairing PIN. Default is 123456. Leave blank if pairing is disabled on the device."
+        }
       }
     },
     "abort": {

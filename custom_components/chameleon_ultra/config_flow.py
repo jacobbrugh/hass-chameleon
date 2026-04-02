@@ -4,7 +4,7 @@ Supports two entry points:
 1. Bluetooth auto-discovery (HA finds a device advertising "ChameleonUltra")
 2. Manual add (user picks from discovered BLE devices)
 
-Both paths validate the device by connecting and reading GET_DEVICE_MODEL.
+Both paths collect an optional BLE pairing PIN and store it in config data.
 """
 
 from __future__ import annotations
@@ -28,7 +28,9 @@ from homeassistant.core import callback
 
 from .const import (
     CONF_EMULATION_HOLD_TIME,
+    CONF_PIN,
     DEFAULT_EMULATION_HOLD_TIME,
+    DEFAULT_PIN,
     DOMAIN,
 )
 
@@ -63,20 +65,28 @@ class ChameleonUltraConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_bluetooth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Confirm Bluetooth discovery."""
+        """Confirm Bluetooth discovery and collect PIN."""
         assert self._discovery_info is not None
         if user_input is not None:
+            pin = user_input.get(CONF_PIN, "").strip() or DEFAULT_PIN
             return self.async_create_entry(
                 title=self._discovery_info.name or "ChameleonUltra",
-                data={CONF_ADDRESS: self._discovery_info.address},
+                data={
+                    CONF_ADDRESS: self._discovery_info.address,
+                    CONF_PIN: pin,
+                },
                 options={CONF_EMULATION_HOLD_TIME: DEFAULT_EMULATION_HOLD_TIME},
             )
 
-        self._set_confirm_only()
         name = self._discovery_info.name or "ChameleonUltra"
         return self.async_show_form(
             step_id="bluetooth_confirm",
             description_placeholders={"name": name},
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(CONF_PIN, default=DEFAULT_PIN): str,
+                }
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -93,9 +103,13 @@ class ChameleonUltraConfigFlow(ConfigFlow, domain=DOMAIN):
             self._abort_if_unique_id_configured()
             info = self._discovered_devices.get(address)
             name = info.name if info else "ChameleonUltra"
+            pin = user_input.get(CONF_PIN, "").strip() or DEFAULT_PIN
             return self.async_create_entry(
                 title=name,
-                data={CONF_ADDRESS: address},
+                data={
+                    CONF_ADDRESS: address,
+                    CONF_PIN: pin,
+                },
                 options={CONF_EMULATION_HOLD_TIME: DEFAULT_EMULATION_HOLD_TIME},
             )
 
@@ -118,7 +132,12 @@ class ChameleonUltraConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema({vol.Required(CONF_ADDRESS): vol.In(options)}),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_ADDRESS): vol.In(options),
+                    vol.Optional(CONF_PIN, default=DEFAULT_PIN): str,
+                }
+            ),
         )
 
     # ------------------------------------------------------------------

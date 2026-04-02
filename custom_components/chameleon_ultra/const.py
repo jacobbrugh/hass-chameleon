@@ -26,6 +26,8 @@ SLOT_COUNT = 8
 
 # Config entry keys
 CONF_EMULATION_HOLD_TIME = "emulation_hold_time"
+CONF_PIN = "pin"
+DEFAULT_PIN = "123456"
 
 
 class Command(IntEnum):
