@@ -96,15 +96,22 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(
                 f"ChameleonUltra {self.address} not found in Bluetooth advertisements"
             )
+        _LOGGER.debug(
+            "Got BLE device ref for %s: name=%s", self.address, ble_device.name
+        )
 
         # Ensure the device is paired in BlueZ before attempting GATT connection
         try:
-            if not await async_is_paired(self.address):
+            _LOGGER.debug("Checking pairing status for %s", self.address)
+            paired = await async_is_paired(self.address)
+            _LOGGER.debug("Pairing check result for %s: %s", self.address, paired)
+            if not paired:
                 pin = self.config_entry.data.get(CONF_PIN, DEFAULT_PIN)
                 _LOGGER.info(
                     "ChameleonUltra %s not paired — initiating BLE pairing", self.address
                 )
                 await async_pair_with_pin(self.address, pin)
+                _LOGGER.info("BLE pairing completed for %s", self.address)
         except Exception as err:
             _LOGGER.warning(
                 "BLE pairing attempt failed for %s: %s (will try connecting anyway)",
@@ -112,7 +119,9 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 err,
             )
 
-        _LOGGER.debug("Connecting to ChameleonUltra %s", self.address)
+        _LOGGER.debug(
+            "Calling establish_connection for %s (max_attempts=3)", self.address
+        )
         self._expected_disconnect = False
         self._client = await establish_connection(
             BleakClientWithServiceCache,
@@ -121,8 +130,13 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             disconnected_callback=self._on_disconnect,
             max_attempts=3,
         )
+        _LOGGER.debug(
+            "establish_connection succeeded for %s, MTU=%s",
+            self.address, self._client.mtu_size,
+        )
 
         self._device = ChameleonUltraDevice(self._client)
+        _LOGGER.debug("Starting NUS TX notifications for %s", self.address)
         await self._client.start_notify(
             NUS_TX_CHAR_UUID, self._device.on_notification
         )
@@ -132,11 +146,16 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _on_disconnect(self, client: BleakClient) -> None:
         """Handle unexpected BLE disconnection."""
+        import traceback
         self._cancel_disconnect_timer()
         self._client = None
         self._device = None
         if not self._expected_disconnect:
-            _LOGGER.warning("ChameleonUltra %s disconnected unexpectedly", self.address)
+            _LOGGER.warning(
+                "ChameleonUltra %s disconnected unexpectedly. Traceback:\n%s",
+                self.address,
+                "".join(traceback.format_stack()),
+            )
 
     def _reset_disconnect_timer(self) -> None:
         """Start or reset the idle disconnect timer."""
@@ -182,23 +201,34 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"Failed to connect: {err}") from err
 
         try:
+            _LOGGER.debug("Polling: get_battery_info")
             battery = await device.get_battery_info()
+            _LOGGER.debug("Polling: get_active_slot")
             active_slot = await device.get_active_slot()
+            _LOGGER.debug("Polling: get_slot_info")
             slot_info = await device.get_slot_info()
+            _LOGGER.debug("Polling: get_enabled_slots")
             enabled_slots = await device.get_enabled_slots()
+            _LOGGER.debug("Polling: get_device_mode")
             device_mode = await device.get_device_mode()
+            _LOGGER.debug("Polling: get_git_version")
             firmware = await device.get_git_version()
 
             # Fetch slot nicknames (best-effort, some may fail)
             slot_nicks: list[str] = []
             for i in range(SLOT_COUNT):
                 try:
+                    _LOGGER.debug("Polling: get_slot_tag_nick(%d)", i)
                     nick = await device.get_slot_tag_nick(i, 0x01)  # HF
                     slot_nicks.append(nick)
                 except (ProtocolError, ChameleonTimeoutError):
                     slot_nicks.append("")
 
+            _LOGGER.debug("Poll complete: battery=%s%%, slot=%d, fw=%s",
+                          battery["percentage"], active_slot, firmware)
+
         except (ProtocolError, ChameleonTimeoutError, OSError) as err:
+            _LOGGER.error("Poll failed at command: %s", err)
             raise UpdateFailed(f"Communication error: {err}") from err
 
         return {
