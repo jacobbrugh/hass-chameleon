@@ -17,6 +17,19 @@ _LOGGER = logging.getLogger(__name__)
 AGENT_PATH = "/org/homeassistant/chameleon_ultra_agent"
 
 
+async def _find_adapter() -> str:
+    """Auto-detect the BlueZ adapter (hci0, hci1, etc.) via D-Bus."""
+    bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+    try:
+        intro = await bus.introspect("org.bluez", "/org/bluez")
+        for node in intro.nodes:
+            if node.name and node.name.startswith("hci"):
+                return node.name
+    finally:
+        bus.disconnect()
+    return "hci0"
+
+
 class _PinAgent(ServiceInterface):
     """BlueZ Agent1 that auto-responds with a static passkey."""
 
@@ -50,8 +63,10 @@ class _PinAgent(ServiceInterface):
         pass
 
 
-async def async_is_paired(address: str, adapter: str = "hci0") -> bool:
+async def async_is_paired(address: str, adapter: str | None = None) -> bool:
     """Check if a BLE device is already paired/bonded in BlueZ."""
+    if adapter is None:
+        adapter = await _find_adapter()
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
     try:
         dev_path = f"/org/bluez/{adapter}/dev_{address.replace(':', '_')}"
@@ -68,20 +83,20 @@ async def async_is_paired(address: str, adapter: str = "hci0") -> bool:
 
 
 async def async_pair_with_pin(
-    address: str, pin: str, adapter: str = "hci0"
+    address: str, pin: str, adapter: str | None = None
 ) -> None:
     """Pair with a BLE device using a 6-digit passkey via BlueZ D-Bus.
 
     Registers a temporary Agent1 that responds to passkey requests,
     initiates pairing, trusts the device, then cleans up.
 
-    The ChameleonUltra's A button must be held during this call.
-
     Args:
         address: BLE MAC address (e.g. "FE:6A:52:FA:98:62").
         pin: 6-digit passkey string (default "123456").
-        adapter: BlueZ adapter name (default "hci0").
+        adapter: BlueZ adapter name (auto-detected if None).
     """
+    if adapter is None:
+        adapter = await _find_adapter()
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
     agent = _PinAgent(int(pin))
     agent_registered = False
