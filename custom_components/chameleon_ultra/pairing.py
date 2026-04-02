@@ -5,8 +5,6 @@ Registers a temporary BlueZ Agent1 that provides the ChameleonUltra's
 for the duration of the pairing attempt and then removed.
 """
 
-from __future__ import annotations
-
 import logging
 
 from dbus_fast.aio import MessageBus

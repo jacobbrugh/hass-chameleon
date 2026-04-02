@@ -17,26 +17,14 @@ def _ensure_mock(name: str) -> None:
         sys.modules[name] = MagicMock()
 
 
-# Mock bleak and its submodules
+# Mock bleak and its submodules (dbus_fast is a real dependency — not mocked)
 for mod in [
     "bleak",
     "bleak.backends",
     "bleak.backends.device",
     "bleak_retry_connector",
-    "dbus_fast",
-    "dbus_fast.aio",
-    "dbus_fast.constants",
-    "dbus_fast.service",
 ]:
     _ensure_mock(mod)
-
-# dbus_fast.service needs real decorators for class construction
-dbus_service = sys.modules["dbus_fast.service"]
-dbus_service.ServiceInterface = type("ServiceInterface", (), {"__init__": lambda self, name: None})
-dbus_service.method = lambda **kw: (lambda f: f)  # identity decorator
-
-dbus_constants = sys.modules["dbus_fast.constants"]
-dbus_constants.BusType = type("BusType", (), {"SYSTEM": 0})
 
 # Mock homeassistant and all submodules used by the integration
 _ha_mods = [
