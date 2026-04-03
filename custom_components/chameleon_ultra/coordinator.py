@@ -1,11 +1,11 @@
 """DataUpdateCoordinator for ChameleonUltra.
 
-Manages the BLE connection lifecycle using a connect-on-demand model.
-The ChameleonUltra is a battery device that sleeps when idle and stops
-BLE advertising. Connections are transient — we connect, do work, and
-let the device sleep. Poll failures due to the device being asleep are
-normal and don't mark entities unavailable; we just reuse the last
-known state.
+The ChameleonUltra sleeps 4 seconds after BLE disconnects and won't
+re-advertise until a button press or USB connection. To prevent this,
+we keep the BLE connection open permanently — the device stays awake
+as long as a BLE client is connected. If the connection drops (device
+reset, out of range, etc.), we return cached state and reconnect on
+the next poll or user action.
 """
 
 from __future__ import annotations
@@ -27,7 +27,6 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import (
     CONF_PIN,
-    DEFAULT_DISCONNECT_DELAY,
     DEFAULT_PIN,
     DOMAIN,
     NUS_TX_CHAR_UUID,
@@ -64,8 +63,6 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.config_entry = entry
         self._client: BleakClient | None = None
         self._device: ChameleonUltraDevice | None = None
-        self._disconnect_timer: asyncio.TimerHandle | None = None
-        self._unavailable_callback: callback | None = None
         self._expected_disconnect = False
         self._last_good_data: dict[str, Any] | None = None
 
@@ -85,10 +82,11 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _ensure_connected(self) -> ChameleonUltraDevice:
         """Connect to the device if not already connected.
 
-        Returns the ChameleonUltraDevice instance.
+        The connection is kept open permanently — the ChameleonUltra stays
+        awake as long as a BLE client is connected (firmware inhibits sleep).
+        We only reconnect if the connection was lost.
         """
         if self._client is not None and self._client.is_connected and self._device is not None:
-            self._reset_disconnect_timer()
             return self._device
 
         # Clean up stale state from previous connection
@@ -142,52 +140,32 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._client.start_notify(
             NUS_TX_CHAR_UUID, self._device.on_notification
         )
-        self._reset_disconnect_timer()
         _LOGGER.info("Connected to ChameleonUltra %s", self.address)
         return self._device
 
     def _on_disconnect(self, client: BleakClient) -> None:
         """Handle BLE disconnection."""
-        self._cancel_disconnect_timer()
         self._client = None
         self._device = None
         if not self._expected_disconnect:
-            _LOGGER.debug(
-                "ChameleonUltra %s disconnected (device likely sleeping)",
+            _LOGGER.info(
+                "ChameleonUltra %s disconnected — will reconnect on next poll "
+                "or action (press device button to wake it)",
                 self.address,
             )
 
-    def _reset_disconnect_timer(self) -> None:
-        """Start or reset the idle disconnect timer."""
-        self._cancel_disconnect_timer()
-        self._disconnect_timer = self.hass.loop.call_later(
-            DEFAULT_DISCONNECT_DELAY,
-            lambda: self.hass.async_create_task(self._disconnect()),
-        )
-
-    def _cancel_disconnect_timer(self) -> None:
-        if self._disconnect_timer is not None:
-            self._disconnect_timer.cancel()
-            self._disconnect_timer = None
-
     async def _disconnect(self) -> None:
         """Gracefully disconnect from the device."""
-        self._cancel_disconnect_timer()
         if self._client is not None and self._client.is_connected:
             self._expected_disconnect = True
-            _LOGGER.debug("Idle disconnect from ChameleonUltra %s", self.address)
+            _LOGGER.debug("Disconnecting from ChameleonUltra %s", self.address)
             await self._client.disconnect()
         self._client = None
         self._device = None
 
     async def async_shutdown(self) -> None:
         """Clean up on integration unload."""
-        self._cancel_disconnect_timer()
-        if self._client is not None and self._client.is_connected:
-            self._expected_disconnect = True
-            await self._client.disconnect()
-        self._client = None
-        self._device = None
+        await self._disconnect()
 
     # ------------------------------------------------------------------
     # Polling
@@ -198,7 +176,8 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         If the device is asleep (unreachable), return the last known data
         with connected=False instead of raising UpdateFailed. This keeps
-        entities available with stale-but-useful state.
+        entities available with stale-but-useful state rather than going
+        "unavailable" every time the device sleeps.
         """
         try:
             device = await self._ensure_connected()
