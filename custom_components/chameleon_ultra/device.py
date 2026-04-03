@@ -133,7 +133,7 @@ class ChameleonUltraDevice:
             raise ProtocolError(
                 f"Response cmd {frame.cmd:#06x} != request cmd {cmd:#06x}"
             )
-        if not frame.is_success:
+        if frame.is_error:
             raise StatusError(cmd=frame.cmd, status=frame.status, data=frame.data)
         return frame
 

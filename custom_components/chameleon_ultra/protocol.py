@@ -78,9 +78,19 @@ class Frame:
     status: int
     data: bytes
 
+    # Known error status codes from the protocol spec
+    _ERROR_STATUSES = frozenset({0x0001, 0x0002, 0x0003, 0x0004, 0xFFFF})
+
     @property
     def is_success(self) -> bool:
-        return self.status == 0x0000
+        return self.status not in self._ERROR_STATUSES
+
+    @property
+    def is_error(self) -> bool:
+        """Check for known error statuses. The device returns non-zero status
+        codes (e.g. 0x0068) for successful responses, so we only reject
+        status codes that are explicitly defined as errors in the protocol."""
+        return self.status in self._ERROR_STATUSES
 
 
 class _State(IntEnum):

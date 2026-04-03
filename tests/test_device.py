@@ -93,18 +93,33 @@ class TestSendCommand:
             await device.send_command(Command.GET_APP_VERSION, timeout=0.05)
 
     @pytest.mark.asyncio
-    async def test_status_error_raised(self) -> None:
+    async def test_invalid_cmd_status_raises(self) -> None:
         client = _make_mock_client()
         device = ChameleonUltraDevice(client)
 
         async def respond() -> None:
             await asyncio.sleep(0.01)
-            _simulate_response(device, Command.SET_SLOT_ENABLE, status=0x0001)
+            _simulate_response(device, Command.SET_SLOT_ENABLE, status=0xFFFF)
 
         asyncio.get_event_loop().create_task(respond())
         with pytest.raises(StatusError) as exc_info:
             await device.send_command(Command.SET_SLOT_ENABLE, b"\x00\x01\x01")
-        assert exc_info.value.status == 0x0001
+        assert exc_info.value.status == 0xFFFF
+
+    @pytest.mark.asyncio
+    async def test_nonzero_status_accepted(self) -> None:
+        """Device returns non-zero status (e.g. 0x0068) for success."""
+        client = _make_mock_client()
+        device = ChameleonUltraDevice(client)
+
+        async def respond() -> None:
+            await asyncio.sleep(0.01)
+            _simulate_response(device, Command.GET_APP_VERSION, b"\x02\x01", status=0x0068)
+
+        asyncio.get_event_loop().create_task(respond())
+        frame = await device.send_command(Command.GET_APP_VERSION)
+        assert frame.data == b"\x02\x01"
+        assert frame.status == 0x0068
 
     @pytest.mark.asyncio
     async def test_cmd_mismatch_raises(self) -> None:
