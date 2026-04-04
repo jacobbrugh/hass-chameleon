@@ -578,7 +578,7 @@ async def test_pin_agent_instantiation_and_introspection() -> None:
     constructing the agent (which triggers @method() annotation parsing)
     and verifying the resulting D-Bus introspection.
     """
-    from custom_components.chameleon_ultra.pairing import _PinAgent
+    from custom_components.chameleon_ultra.pairing import PinAgent as _PinAgent
 
     agent = _PinAgent(123456)
     introspection = agent.introspect()
@@ -615,7 +615,7 @@ async def test_pin_agent_instantiation_and_introspection() -> None:
 
 async def test_pin_agent_returns_configured_passkey() -> None:
     """RequestPasskey method returns the PIN the agent was constructed with."""
-    from custom_components.chameleon_ultra.pairing import _PinAgent
+    from custom_components.chameleon_ultra.pairing import PinAgent as _PinAgent
 
     agent = _PinAgent(654321)
 

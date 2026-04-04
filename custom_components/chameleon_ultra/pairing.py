@@ -1,8 +1,12 @@
-"""BLE pairing helper for ChameleonUltra using BlueZ D-Bus.
+"""BLE pairing agent for ChameleonUltra.
 
-Registers a temporary BlueZ Agent1 that provides the ChameleonUltra's
-6-digit BLE passkey during SMP pairing. The agent is registered only
-for the duration of the pairing attempt and then removed.
+Registers a persistent BlueZ Agent1 that provides the ChameleonUltra's
+6-digit BLE passkey during SMP pairing. The agent stays registered for
+the lifetime of the coordinator so bleak's pair=True can trigger pairing
+at any time.
+
+Bleak handles calling Device1.Pair() itself — this module only provides
+the agent that answers the passkey prompt.
 """
 
 import logging
@@ -10,7 +14,6 @@ import logging
 from dbus_fast.aio import MessageBus
 from dbus_fast.constants import BusType
 from dbus_fast.service import ServiceInterface, method
-from dbus_fast import Variant
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,7 +33,7 @@ async def _find_adapter() -> str:
     return "hci0"
 
 
-class _PinAgent(ServiceInterface):
+class PinAgent(ServiceInterface):
     """BlueZ Agent1 that auto-responds with a static passkey."""
 
     def __init__(self, pin: int) -> None:
@@ -82,71 +85,34 @@ async def async_is_paired(address: str, adapter: str | None = None) -> bool:
         bus.disconnect()
 
 
-async def async_pair_with_pin(
-    address: str, pin: str, adapter: str | None = None
-) -> None:
-    """Pair with a BLE device using a 6-digit passkey via BlueZ D-Bus.
+async def async_register_agent(pin: int) -> tuple[MessageBus, PinAgent]:
+    """Register a persistent BlueZ pairing agent.
 
-    Registers a temporary Agent1 that responds to passkey requests,
-    initiates pairing, trusts the device, then cleans up.
-
-    Args:
-        address: BLE MAC address (e.g. "FE:6A:52:FA:98:62").
-        pin: 6-digit passkey string (default "123456").
-        adapter: BlueZ adapter name (auto-detected if None).
+    Returns the D-Bus connection and agent — caller must keep both alive
+    and call async_unregister_agent() on shutdown.
     """
-    if adapter is None:
-        adapter = await _find_adapter()
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
-    agent = _PinAgent(int(pin))
-    agent_registered = False
+    agent = PinAgent(pin)
+    bus.export(AGENT_PATH, agent)
 
+    bluez_intro = await bus.introspect("org.bluez", "/org/bluez")
+    bluez_obj = bus.get_proxy_object("org.bluez", "/org/bluez", bluez_intro)
+    agent_mgr = bluez_obj.get_interface("org.bluez.AgentManager1")
+    await agent_mgr.call_register_agent(AGENT_PATH, "KeyboardDisplay")
+    await agent_mgr.call_request_default_agent(AGENT_PATH)
+    _LOGGER.debug("Registered BLE pairing agent at %s", AGENT_PATH)
+
+    return bus, agent
+
+
+async def async_unregister_agent(bus: MessageBus) -> None:
+    """Unregister the pairing agent and disconnect the D-Bus connection."""
     try:
-        # Export the agent object on our D-Bus connection
-        bus.export(AGENT_PATH, agent)
-
-        # Register it with BlueZ as the default agent
         bluez_intro = await bus.introspect("org.bluez", "/org/bluez")
         bluez_obj = bus.get_proxy_object("org.bluez", "/org/bluez", bluez_intro)
         agent_mgr = bluez_obj.get_interface("org.bluez.AgentManager1")
-        await agent_mgr.call_register_agent(AGENT_PATH, "KeyboardDisplay")
-        await agent_mgr.call_request_default_agent(AGENT_PATH)
-        agent_registered = True
-        _LOGGER.debug("Registered BLE pairing agent at %s", AGENT_PATH)
-
-        # Get the BlueZ Device1 object
-        dev_path = f"/org/bluez/{adapter}/dev_{address.replace(':', '_')}"
-        dev_intro = await bus.introspect("org.bluez", dev_path)
-        dev_obj = bus.get_proxy_object("org.bluez", dev_path, dev_intro)
-        device = dev_obj.get_interface("org.bluez.Device1")
-        props = dev_obj.get_interface("org.freedesktop.DBus.Properties")
-
-        # Check if already paired
-        paired = await props.call_get("org.bluez.Device1", "Paired")
-        if paired.value:
-            _LOGGER.info("ChameleonUltra %s is already paired", address)
-            return
-
-        # Initiate pairing — BlueZ will call our agent's RequestPasskey
-        _LOGGER.info("Pairing with ChameleonUltra %s (hold A button!)", address)
-        await device.call_pair()
-
-        # Trust the device so BlueZ auto-connects in the future
-        await props.call_set(
-            "org.bluez.Device1", "Trusted", Variant("b", True)
-        )
-        _LOGGER.info("Successfully paired and trusted ChameleonUltra %s", address)
-
-    finally:
-        if agent_registered:
-            try:
-                bluez_intro = await bus.introspect("org.bluez", "/org/bluez")
-                bluez_obj = bus.get_proxy_object(
-                    "org.bluez", "/org/bluez", bluez_intro
-                )
-                agent_mgr = bluez_obj.get_interface("org.bluez.AgentManager1")
-                await agent_mgr.call_unregister_agent(AGENT_PATH)
-                _LOGGER.debug("Unregistered BLE pairing agent")
-            except Exception:
-                _LOGGER.debug("Failed to unregister agent (may already be gone)")
-        bus.disconnect()
+        await agent_mgr.call_unregister_agent(AGENT_PATH)
+        _LOGGER.debug("Unregistered BLE pairing agent")
+    except Exception:
+        _LOGGER.debug("Failed to unregister agent (may already be gone)")
+    bus.disconnect()

@@ -20,9 +20,10 @@ from bleak_retry_connector import (
     BleakClientWithServiceCache,
     establish_connection,
 )
+from dbus_fast.aio import MessageBus
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
@@ -31,10 +32,13 @@ from .const import (
     DOMAIN,
     NUS_TX_CHAR_UUID,
     SLOT_COUNT,
-    DeviceModel,
 )
 from .device import ChameleonTimeoutError, ChameleonUltraDevice
-from .pairing import async_is_paired, async_pair_with_pin
+from .pairing import (
+    async_is_paired,
+    async_register_agent,
+    async_unregister_agent,
+)
 from .protocol import ProtocolError
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,6 +69,7 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._device: ChameleonUltraDevice | None = None
         self._expected_disconnect = False
         self._last_good_data: dict[str, Any] | None = None
+        self._agent_bus: MessageBus | None = None
 
     @property
     def device(self) -> ChameleonUltraDevice | None:
@@ -76,15 +81,33 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._client is not None and self._client.is_connected
 
     # ------------------------------------------------------------------
+    # Agent lifecycle
+    # ------------------------------------------------------------------
+
+    async def _ensure_agent_registered(self) -> None:
+        """Register the BLE pairing agent if not already registered."""
+        if self._agent_bus is not None:
+            return
+        pin = int(self.config_entry.data.get(CONF_PIN, DEFAULT_PIN))
+        self._agent_bus, _ = await async_register_agent(pin)
+        _LOGGER.debug("Pairing agent registered (PIN configured)")
+
+    async def _teardown_agent(self) -> None:
+        """Unregister the pairing agent."""
+        if self._agent_bus is not None:
+            await async_unregister_agent(self._agent_bus)
+            self._agent_bus = None
+
+    # ------------------------------------------------------------------
     # Connection lifecycle
     # ------------------------------------------------------------------
 
     async def _ensure_connected(self) -> ChameleonUltraDevice:
         """Connect to the device if not already connected.
 
-        The connection is kept open permanently — the ChameleonUltra stays
-        awake as long as a BLE client is connected (firmware inhibits sleep).
-        We only reconnect if the connection was lost.
+        Pairing is handled by bleak's pair=True parameter, which calls
+        Device1.Pair() as part of the connect flow. Our registered agent
+        provides the passkey when BlueZ requests it during SMP.
         """
         if self._client is not None and self._client.is_connected and self._device is not None:
             return self._device
@@ -105,23 +128,15 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "Got BLE device ref for %s: name=%s", self.address, ble_device.name
         )
 
-        # Ensure the device is paired in BlueZ before attempting GATT connection
-        try:
-            paired = await async_is_paired(self.address)
-            _LOGGER.debug("Pairing check for %s: %s", self.address, paired)
-            if not paired:
-                pin = self.config_entry.data.get(CONF_PIN, DEFAULT_PIN)
-                _LOGGER.info(
-                    "ChameleonUltra %s not paired — initiating BLE pairing",
-                    self.address,
-                )
-                await async_pair_with_pin(self.address, pin)
-                _LOGGER.info("BLE pairing completed for %s", self.address)
-        except Exception as err:
-            _LOGGER.debug(
-                "Pairing check/attempt for %s: %s (continuing anyway)",
+        # Ensure the pairing agent is registered before connecting
+        await self._ensure_agent_registered()
+
+        # Check if we need to pair — let bleak handle it during connect
+        needs_pair = not await async_is_paired(self.address)
+        if needs_pair:
+            _LOGGER.info(
+                "ChameleonUltra %s not paired — bleak will pair during connect",
                 self.address,
-                err,
             )
 
         self._expected_disconnect = False
@@ -131,6 +146,7 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.address,
             disconnected_callback=self._on_disconnect,
             max_attempts=3,
+            pair=needs_pair,
         )
         _LOGGER.debug(
             "Connected to %s, MTU=%s", self.address, self._client.mtu_size
@@ -166,6 +182,7 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_shutdown(self) -> None:
         """Clean up on integration unload."""
         await self._disconnect()
+        await self._teardown_agent()
 
     # ------------------------------------------------------------------
     # Polling

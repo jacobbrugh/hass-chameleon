@@ -1,0 +1,61 @@
+#!/usr/bin/env expect
+# Test 1: Does bluetoothctl interactive pairing work on nix1?
+# Run: nix shell nixpkgs#expect -c 'sudo expect scripts/test_bluetoothctl_pair.exp'
+
+set timeout 30
+set address "FE:6A:52:FA:98:62"
+set passkey "123456"
+
+spawn bluetoothctl
+expect "#"
+
+send "agent on\r"
+expect "Agent registered" { puts "\n>>> Agent registered" }
+
+send "default-agent\r"
+expect "Default agent" { puts "\n>>> Default agent set" }
+
+send "scan on\r"
+expect {
+    -re "FE.6A.52.FA.98.62" { puts "\n>>> Found device by MAC" }
+    timeout { puts "\n>>> Timeout waiting for device"; exit 1 }
+}
+
+send "scan off\r"
+expect "#"
+
+send "pair $address\r"
+expect {
+    -re "Enter passkey|Passkey" {
+        puts "\n>>> Passkey requested, entering $passkey"
+        send "$passkey\r"
+    }
+    "Pairing successful" {
+        puts "\n>>> Paired without passkey prompt"
+    }
+    -re "Failed|error" {
+        puts "\n>>> Pairing failed before passkey prompt"
+    }
+    timeout {
+        puts "\n>>> Timeout during pairing"
+    }
+}
+
+# Wait for pairing result
+expect {
+    "Pairing successful" { puts "\n>>> PAIRING SUCCEEDED" }
+    -re "Failed|error|not available" { puts "\n>>> PAIRING FAILED" }
+    timeout { puts "\n>>> Timeout waiting for pairing result" }
+}
+
+send "info $address\r"
+expect "#"
+
+send "trust $address\r"
+expect "#"
+
+send "info $address\r"
+expect "#"
+
+send "quit\r"
+expect eof

@@ -8,10 +8,10 @@
 # ///
 """Standalone BLE connection test for ChameleonUltra.
 
-Proves the full connection flow works outside HA:
+Tests the full connection flow outside HA:
   1. Scan for the device
   2. Register a BlueZ pairing agent with the configured PIN
-  3. Connect via bleak
+  3. Connect via bleak with pair=True (bleak calls Pair() internally)
   4. Send GET_APP_VERSION over NUS
   5. Parse the protocol response
   6. Disconnect cleanly
@@ -23,14 +23,32 @@ Usage:
 
 import argparse
 import asyncio
+import logging
 import struct
 import sys
+import time
 
 from bleak import BleakClient, BleakScanner
-from dbus_fast import Variant
 from dbus_fast.aio import MessageBus
 from dbus_fast.constants import BusType
 from dbus_fast.service import ServiceInterface, method
+
+# Crank logging to maximum on everything
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s.%(msecs)03d %(name)-40s %(levelname)-5s %(message)s",
+    datefmt="%H:%M:%S",
+)
+for mod in [
+    "dbus_fast", "dbus_fast.message_bus", "dbus_fast.aio",
+    "dbus_fast.aio.message_bus", "dbus_fast.aio.message_reader",
+    "dbus_fast.service", "dbus_fast.proxy_object",
+    "bleak", "bleak.backends.bluezdbus",
+    "bleak.backends.bluezdbus.manager",
+    "bleak.backends.bluezdbus.client",
+    "bleak.backends.bluezdbus.scanner",
+]:
+    logging.getLogger(mod).setLevel(logging.DEBUG)
 
 # -- Protocol constants (mirrored from const.py) --
 
@@ -90,44 +108,53 @@ class PinAgent(ServiceInterface):
     def __init__(self, pin: int) -> None:
         super().__init__("org.bluez.Agent1")
         self._pin = pin
+        self._t0 = time.monotonic()
+
+    def _ts(self) -> str:
+        return f"t+{time.monotonic() - self._t0:.3f}s"
 
     @method()
     def Release(self) -> None:
-        pass
+        print(f"  [agent {self._ts()}] Release called")
 
     @method()
     def RequestPasskey(self, device: "o") -> "u":
-        print(f"  [agent] Providing passkey {self._pin} for {device}")
+        print(f"  [agent {self._ts()}] >>> RequestPasskey ENTER for {device}")
+        print(f"  [agent {self._ts()}] >>> Returning passkey {self._pin} (type={type(self._pin).__name__})")
         return self._pin
 
     @method()
     def DisplayPasskey(self, device: "o", passkey: "u", entered: "q") -> None:
-        print(f"  [agent] DisplayPasskey: {passkey} (entered: {entered})")
+        print(f"  [agent {self._ts()}] DisplayPasskey: passkey={passkey} entered={entered} device={device}")
 
     @method()
     def RequestConfirmation(self, device: "o", passkey: "u") -> None:
-        print(f"  [agent] Confirming passkey {passkey}")
+        print(f"  [agent {self._ts()}] RequestConfirmation: passkey={passkey} device={device}")
 
     @method()
     def AuthorizeService(self, device: "o", uuid: "s") -> None:
-        pass
+        print(f"  [agent {self._ts()}] AuthorizeService: uuid={uuid} device={device}")
 
     @method()
     def Cancel(self) -> None:
-        print("  [agent] Pairing cancelled")
+        print(f"  [agent {self._ts()}] !!! Cancel called — pairing was canceled by BlueZ")
 
 
 async def register_agent(bus: MessageBus, pin: int) -> PinAgent:
     """Register a BlueZ pairing agent on the system bus."""
     agent = PinAgent(pin)
+    print(f"  [register] Exporting agent at {AGENT_PATH}")
     bus.export(AGENT_PATH, agent)
 
+    print(f"  [register] Introspecting org.bluez /org/bluez")
     introspection = await bus.introspect("org.bluez", "/org/bluez")
     obj = bus.get_proxy_object("org.bluez", "/org/bluez", introspection)
     mgr = obj.get_interface("org.bluez.AgentManager1")
+    print(f"  [register] Calling RegisterAgent({AGENT_PATH}, KeyboardDisplay)")
     await mgr.call_register_agent(AGENT_PATH, "KeyboardDisplay")
+    print(f"  [register] Calling RequestDefaultAgent({AGENT_PATH})")
     await mgr.call_request_default_agent(AGENT_PATH)
-    print(f"  [agent] Registered pairing agent (PIN: {pin})")
+    print(f"  [register] Agent registered and set as default (PIN: {pin})")
     return agent
 
 
@@ -140,31 +167,6 @@ async def unregister_agent(bus: MessageBus) -> None:
         print("  [agent] Unregistered pairing agent")
     except Exception:
         pass
-
-
-async def ensure_paired(bus: MessageBus, address: str, adapter: str = "hci1") -> None:
-    """Check if paired; if not, initiate pairing (agent must be registered)."""
-    dev_path = f"/org/bluez/{adapter}/dev_{address.replace(':', '_')}"
-    try:
-        intro = await bus.introspect("org.bluez", dev_path)
-    except Exception:
-        print(f"  [pair] Device {address} not known to BlueZ yet — skipping pair check")
-        return
-
-    obj = bus.get_proxy_object("org.bluez", dev_path, intro)
-    props = obj.get_interface("org.freedesktop.DBus.Properties")
-    paired = await props.call_get("org.bluez.Device1", "Paired")
-
-    if paired.value:
-        print(f"  [pair] Already paired with {address}")
-        return
-
-    print(f"  [pair] Not paired — initiating pairing with {address}...")
-    device = obj.get_interface("org.bluez.Device1")
-    await device.call_pair()
-
-    await props.call_set("org.bluez.Device1", "Trusted", Variant("b", True))
-    print(f"  [pair] Successfully paired and trusted {address}")
 
 
 async def send_command(
@@ -203,7 +205,7 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description="Test BLE connection to ChameleonUltra")
     parser.add_argument("--address", "-a", default="FE:6A:52:FA:98:62")
     parser.add_argument("--pin", "-p", default="123456")
-    parser.add_argument("--skip-pair", action="store_true", help="Skip pairing step")
+    parser.add_argument("--skip-pair", action="store_true", help="Skip pairing (use stored bond)")
     args = parser.parse_args()
 
     address = args.address
@@ -215,76 +217,77 @@ async def main() -> None:
     print()
 
     # Step 1: Detect adapter
-    print("[1/6] Detecting BlueZ adapter...")
+    t0 = time.monotonic()
+    def ts() -> str:
+        return f"t+{time.monotonic() - t0:.3f}s"
+
+    print(f"[1/5] {ts()} Detecting BlueZ adapter...")
     adapter = await find_adapter()
-    print(f"  Using adapter: {adapter}")
+    print(f"  {ts()} Using adapter: {adapter}")
 
     # Step 2: Scan
-    print(f"\n[2/6] Scanning for device...")
+    print(f"\n[2/5] {ts()} Scanning for device...")
     device = await BleakScanner.find_device_by_address(address, timeout=10.0)
     if device is None:
-        print(f"  FAIL: Device {address} not found")
+        print(f"  {ts()} FAIL: Device {address} not found (is it awake?)")
         sys.exit(1)
-    print(f"  Found: {device.name} ({device.address})")
+    print(f"  {ts()} Found: {device.name} ({device.address})")
 
-    # Step 3: Register pairing agent (pairing triggered automatically during GATT)
-    bus = None
-    if not args.skip_pair:
-        print(f"\n[3/6] Registering pairing agent...")
-        bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
-        await register_agent(bus, pin)
+    # Step 3: Register pairing agent FIRST — must be ready before Pair() triggers
+    print(f"\n[3/5] {ts()} Connecting to system D-Bus for agent...")
+    bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+    print(f"  {ts()} D-Bus connected, unique name: {bus.unique_name}")
+    print(f"  {ts()} Registering pairing agent...")
+    await register_agent(bus, pin)
+    print(f"  {ts()} Agent ready, waiting 0.5s for BlueZ to register it...")
+    await asyncio.sleep(0.5)  # let BlueZ fully process the agent registration
 
-        # Pre-pair via D-Bus if device is already known but not paired
-        print(f"\n[4/6] Checking pairing (adapter={adapter})...")
-        try:
-            await ensure_paired(bus, address, adapter=adapter)
-        except Exception as e:
-            print(f"  Pairing via D-Bus didn't work: {e}")
-            print("  Agent is registered — pairing should trigger during GATT connect")
-    else:
-        print("\n[3/6] Skipping pairing agent (--skip-pair)")
-        print("\n[4/6] Skipping pairing check")
-
-    # Step 5: Connect and send commands
-    print("\n[5/6] Connecting via GATT...")
+    # Step 4: Connect — bleak calls Pair() instead of Connect() when pair=True
+    needs_pair = not args.skip_pair
+    print(f"\n[4/5] {ts()} Connecting via GATT (pair={needs_pair})...")
+    print(f"  {ts()} BleakClient.__init__ with timeout=30, pair={needs_pair}")
     try:
-        async with BleakClient(device, timeout=15.0) as client:
-            print(f"  Connected! MTU: {client.mtu_size}")
+        async with BleakClient(device, timeout=30.0, pair=needs_pair) as client:
+
+            print(f"  {ts()} Connected! MTU: {client.mtu_size}")
+            print(f"  {ts()} is_connected={client.is_connected}")
 
             # GET_APP_VERSION
             cmd, status, data = await send_command(client, CMD_GET_APP_VERSION)
-            if status == 0 and len(data) >= 2:
+            if len(data) >= 2:
                 print(f"  App version: {data[0]}.{data[1]}")
             else:
                 print(f"  GET_APP_VERSION: status={status:#06x} data={data.hex()}")
 
             # GET_DEVICE_MODEL
             cmd, status, data = await send_command(client, CMD_GET_DEVICE_MODEL)
-            if status == 0 and data:
+            if data:
                 model = "Ultra" if data[0] == 0 else "Lite"
                 print(f"  Model: Chameleon{model}")
 
             # GET_GIT_VERSION
             cmd, status, data = await send_command(client, CMD_GET_GIT_VERSION)
-            if status == 0:
-                print(f"  Firmware: {data.decode('utf-8', errors='replace')}")
+            print(f"  Firmware: {data.decode('utf-8', errors='replace')}")
 
             # GET_BATTERY_INFO
             cmd, status, data = await send_command(client, CMD_GET_BATTERY_INFO)
-            if status == 0 and len(data) >= 3:
+            if len(data) >= 3:
                 voltage = struct.unpack("!H", data[0:2])[0]
                 pct = data[2]
                 print(f"  Battery: {pct}% ({voltage}mV)")
 
-            print("\n[6/6] All commands succeeded!")
+            print(f"\n[5/5] All commands succeeded!")
 
     except Exception as e:
-        print(f"  FAIL: {e}")
+        print(f"\n  {ts()} FAIL: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
     finally:
-        if bus:
-            await unregister_agent(bus)
-            bus.disconnect()
+        print(f"  {ts()} Cleaning up agent...")
+        await unregister_agent(bus)
+        bus.disconnect()
+        print(f"  {ts()} Done")
 
     print("\n=== SUCCESS ===")
 
