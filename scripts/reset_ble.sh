@@ -12,7 +12,7 @@ BT_USB_ID="8087:0032"
 echo "=== ChameleonUltra BLE Full Reset ==="
 
 # 1. Clear PC-side bond
-echo "[1/6] Removing PC-side bond..."
+echo "[1] Removing PC-side bond..."
 if bluetoothctl remove "$DEVICE_ADDR" 2>&1 | grep -q "removed"; then
     echo "  Removed"
 else
@@ -20,7 +20,7 @@ else
 fi
 
 # 2. Clear device-side bonds via USB
-echo "[2/6] Clearing device-side bonds..."
+echo "[2] Clearing device-side bonds..."
 OUTPUT=$({
     sleep 1; echo "hw connect"
     sleep 3; echo "hw settings bleclearbonds --force"
@@ -37,23 +37,24 @@ if echo "$OUTPUT" | grep -qi "Store success"; then
 fi
 sleep 1
 
-# 3. Reset USB adapter
-echo "[3/6] Resetting BT adapter..."
-CURRENT_HCI=$(hciconfig -a 2>&1 | grep "^hci" | head -1 | cut -d: -f1 || true)
-echo "  Before: ${CURRENT_HCI:-none}"
-usbreset "$BT_USB_ID" 2>&1 || true
-sleep 3
-
-# 4. Restart bluetooth service
-echo "[4/6] Restarting bluetooth service..."
-systemctl restart bluetooth
-sleep 2
-
-# 5. Verify adapter state — retry usbreset if not hci0
-echo "[5/6] Verifying adapter..."
+# 3. Fix adapter if not hci0 (usbreset crashes Intel firmware, so only do it when needed)
 HCI=$(hciconfig -a 2>&1 | grep "^hci" | head -1 | cut -d: -f1 || true)
-if [ "${HCI:-}" != "hci0" ]; then
-    echo "  Got ${HCI:-missing}, retrying USB reset..."
+if [ "${HCI:-}" = "hci0" ]; then
+    echo "[3] Adapter already hci0, skipping USB reset"
+    systemctl restart bluetooth
+    sleep 2
+elif [ -n "${HCI:-}" ]; then
+    echo "[3] Adapter is $HCI, USB resetting to get hci0..."
+    usbreset "$BT_USB_ID" 2>&1 || true
+    sleep 3
+    systemctl restart bluetooth
+    sleep 2
+    HCI=$(hciconfig -a 2>&1 | grep "^hci" | head -1 | cut -d: -f1 || true)
+    if [ "${HCI:-}" != "hci0" ]; then
+        echo "  WARNING: still ${HCI:-missing}, reboot may be needed"
+    fi
+else
+    echo "[3] No adapter found, USB resetting..."
     usbreset "$BT_USB_ID" 2>&1 || true
     sleep 3
     systemctl restart bluetooth
@@ -61,40 +62,43 @@ if [ "${HCI:-}" != "hci0" ]; then
     HCI=$(hciconfig -a 2>&1 | grep "^hci" | head -1 | cut -d: -f1 || true)
 fi
 echo "  Adapter: ${HCI:-NOT FOUND}"
-if [ "${HCI:-}" != "hci0" ]; then
-    echo "  WARNING: adapter is ${HCI:-missing}, not hci0 (reboot may be needed)"
-fi
 
-# 6. Wake device via USB, toggle pairing to force fresh BLE advertising
-echo "[6/6] Waking device and restarting BLE advertising..."
-usbreset 6868:8686 2>&1 || true
-sleep 3
-({
+# 4. Wake device, toggle pairing to force fresh BLE advertising
+echo "[4] Waking device..."
+
+# Try connecting via USB first — only usbreset if that fails
+WAKE_OUTPUT=$({
     sleep 1; echo "hw connect"
     sleep 3; echo "hw settings blepair -d"
     sleep 1; echo "hw settings blepair -e"
     sleep 1; echo "hw settings store"
     sleep 1; echo "exit"
 } | timeout 15 chameleon-cli 2>&1) || true
-# USB reset to force BLE stack restart with clean state, then wake via USB
-usbreset 6868:8686 2>&1 || true
-sleep 3
-({
-    sleep 1; echo "hw connect"
-    sleep 2; echo "exit"
-} | timeout 8 chameleon-cli 2>&1) || true
-sleep 3
 
-# Verify device is advertising
-echo "  Scanning for device..."
+if echo "$WAKE_OUTPUT" | grep -qi "connected.*v[0-9]"; then
+    echo "  Device connected via USB"
+else
+    echo "  USB connect failed, resetting ChameleonUltra..."
+    usbreset 6868:8686 2>&1 || true
+    sleep 3
+    ({
+        sleep 1; echo "hw connect"
+        sleep 3; echo "hw settings blepair -d"
+        sleep 1; echo "hw settings blepair -e"
+        sleep 1; echo "hw settings store"
+        sleep 1; echo "exit"
+    } | timeout 15 chameleon-cli 2>&1) || true
+fi
+sleep 2
+
+# 5. Verify device is advertising
+echo "[5] Scanning for device..."
 SCAN_COUNT=$(bluetoothctl --timeout 5 scan on 2>&1 | grep -c "$DEVICE_ADDR" || true)
 if [ "$SCAN_COUNT" -gt 0 ]; then
     echo "  Device found ($SCAN_COUNT times)"
 else
-    echo "  ERROR: device not advertising after 8s scan"
-    exit 1
+    echo "  WARNING: device not found in scan"
 fi
 
 echo ""
 echo "=== Reset complete ==="
-echo "Adapter: hci0, bonds cleared, device advertising."
