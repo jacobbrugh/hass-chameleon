@@ -37,7 +37,7 @@ if echo "$OUTPUT" | grep -qi "Store success"; then
 fi
 sleep 1
 
-# 3. Reset USB adapter back to hci0
+# 3. Reset USB adapter
 echo "[3/6] Resetting BT adapter..."
 CURRENT_HCI=$(hciconfig -a 2>&1 | grep "^hci" | head -1 | cut -d: -f1 || true)
 echo "  Before: ${CURRENT_HCI:-none}"
@@ -49,13 +49,20 @@ echo "[4/6] Restarting bluetooth service..."
 systemctl restart bluetooth
 sleep 2
 
-# 5. Verify adapter state
+# 5. Verify adapter state — retry usbreset if not hci0
 echo "[5/6] Verifying adapter..."
 HCI=$(hciconfig -a 2>&1 | grep "^hci" | head -1 | cut -d: -f1 || true)
+if [ "${HCI:-}" != "hci0" ]; then
+    echo "  Got ${HCI:-missing}, retrying USB reset..."
+    usbreset "$BT_USB_ID" 2>&1 || true
+    sleep 3
+    systemctl restart bluetooth
+    sleep 2
+    HCI=$(hciconfig -a 2>&1 | grep "^hci" | head -1 | cut -d: -f1 || true)
+fi
 echo "  Adapter: ${HCI:-NOT FOUND}"
 if [ "${HCI:-}" != "hci0" ]; then
-    echo "  ERROR: adapter is ${HCI:-missing}, not hci0"
-    exit 1
+    echo "  WARNING: adapter is ${HCI:-missing}, not hci0 (reboot may be needed)"
 fi
 
 # 6. Wake device via USB, toggle pairing to force fresh BLE advertising
