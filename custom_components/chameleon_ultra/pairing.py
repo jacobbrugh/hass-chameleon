@@ -76,6 +76,7 @@ async def async_is_paired(address: str, adapter: str | None = None) -> bool:
         try:
             introspection = await bus.introspect("org.bluez", dev_path)
         except Exception:
+            _LOGGER.debug("Device %s not known to BlueZ", address, exc_info=True)
             return False
         obj = bus.get_proxy_object("org.bluez", dev_path, introspection)
         props = obj.get_interface("org.freedesktop.DBus.Properties")
@@ -114,5 +115,5 @@ async def async_unregister_agent(bus: MessageBus) -> None:
         await agent_mgr.call_unregister_agent(AGENT_PATH)
         _LOGGER.debug("Unregistered BLE pairing agent")
     except Exception:
-        _LOGGER.debug("Failed to unregister agent (may already be gone)")
+        _LOGGER.debug("Failed to unregister agent (may already be gone)", exc_info=True)
     bus.disconnect()

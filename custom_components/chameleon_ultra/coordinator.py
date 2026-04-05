@@ -243,10 +243,9 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception as err:
             if self._last_good_data is not None:
                 _LOGGER.warning(
-                    "ChameleonUltra %s unreachable (%s: %s), using cached state",
+                    "ChameleonUltra %s unreachable, using cached state",
                     self.address,
-                    type(err).__name__,
-                    err,
+                    exc_info=True,
                 )
                 return {**self._last_good_data, "connected": False}
             raise UpdateFailed(f"Failed to connect: {err}") from err
@@ -271,8 +270,8 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 try:
                     nick = await device.get_slot_tag_nick(i, 0x01)  # HF
                     slot_nicks.append(nick)
-                except (ProtocolError, ChameleonTimeoutError) as err:
-                    _LOGGER.debug("  slot %d nick failed: %s", i, err)
+                except (ProtocolError, ChameleonTimeoutError):
+                    _LOGGER.debug("  slot %d nick failed", i, exc_info=True)
                     slot_nicks.append("")
 
             _LOGGER.info(
@@ -285,10 +284,9 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         except (ProtocolError, ChameleonTimeoutError, OSError) as err:
             _LOGGER.error(
-                "ChameleonUltra %s command failed: %s: %s",
+                "ChameleonUltra %s command failed",
                 self.address,
-                type(err).__name__,
-                err,
+                exc_info=True,
             )
             if self._last_good_data is not None:
                 return {**self._last_good_data, "connected": False}
