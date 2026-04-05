@@ -17,6 +17,7 @@ from datetime import timedelta
 from typing import Any
 
 from bleak import BleakClient
+from bleak_retry_connector import establish_connection
 from dbus_fast.aio import MessageBus
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
@@ -147,26 +148,25 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("ChameleonUltra %s already paired", self.address)
 
         self._expected_disconnect = False
-        self._client = BleakClient(
-            ble_device,
-            disconnected_callback=self._on_disconnect,
-            timeout=30.0,
-            pair=needs_pair,
-        )
-
         try:
-            await self._client.connect()
+            self._client = await establish_connection(
+                BleakClient,
+                ble_device,
+                self.address,
+                disconnected_callback=self._on_disconnect,
+                max_attempts=3,
+                pair=needs_pair,
+            )
         except Exception:
             _LOGGER.exception(
                 "Failed to connect to %s (pair=%s)",
                 self.address,
                 needs_pair,
             )
-            self._client = None
             raise
 
         # ChameleonUltra negotiates 247-byte MTU at the link layer.
-        # Must set before any access to mtu_size to suppress bleak warning.
+        # Set after connect so _backend exists, before any mtu_size access.
         self._client._backend._mtu_size = 247
 
         _LOGGER.info("Connected to %s, MTU=%s", self.address, self._client.mtu_size)
