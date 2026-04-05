@@ -176,16 +176,15 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             needs_pair,
         )
 
-        # Acquire MTU to avoid the "Using default MTU" warning and ensure
-        # proper throughput for NUS protocol frames
+        # Acquire MTU via bleak's backend (per bleak/examples/mtu_size.py)
         try:
-            await self._client._acquire_mtu()
-            _LOGGER.debug("MTU after acquire: %s", self._client.mtu_size)
+            await self._client._backend._acquire_mtu()
         except Exception:
             _LOGGER.warning(
                 "Failed to acquire MTU for %s, using default %s",
                 self.address,
                 self._client.mtu_size,
+                exc_info=True,
             )
 
         self._device = ChameleonUltraDevice(self._client)
