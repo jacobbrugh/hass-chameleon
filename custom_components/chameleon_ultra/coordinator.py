@@ -69,7 +69,6 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._client: BleakClient | None = None
         self._device: ChameleonUltraDevice | None = None
         self._expected_disconnect = False
-        self._last_good_data: dict[str, Any] | None = None
         self._agent_bus: MessageBus | None = None
 
     @property
@@ -241,13 +240,6 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             device = await self._ensure_connected()
         except Exception as err:
-            if self._last_good_data is not None:
-                _LOGGER.warning(
-                    "ChameleonUltra %s unreachable, using cached state",
-                    self.address,
-                    exc_info=True,
-                )
-                return {**self._last_good_data, "connected": False}
             raise UpdateFailed(f"Failed to connect: {err}") from err
 
         try:
@@ -288,8 +280,6 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.address,
                 exc_info=True,
             )
-            if self._last_good_data is not None:
-                return {**self._last_good_data, "connected": False}
             raise UpdateFailed(f"Communication error: {err}") from err
 
         data = {
@@ -303,5 +293,4 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "slot_nicks": slot_nicks,
             "connected": True,
         }
-        self._last_good_data = data
         return data
