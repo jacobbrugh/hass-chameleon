@@ -13,21 +13,36 @@ echo "=== ChameleonUltra BLE Full Reset ==="
 
 # 1. Clear PC-side bond
 echo "[1/6] Removing PC-side bond..."
-bluetoothctl remove "$DEVICE_ADDR" 2>&1 | grep -E "removed|not available" || true
+if bluetoothctl remove "$DEVICE_ADDR" 2>&1 | grep -q "removed"; then
+    echo "  Removed"
+else
+    echo "  No bond to remove"
+fi
 
 # 2. Clear device-side bonds via USB
 echo "[2/6] Clearing device-side bonds..."
-chameleon-cli -c "hw connect; hw settings bleclearbonds --force; hw settings store" 2>&1 | grep -iE "clear|store|success|connected" || true
+OUTPUT=$({
+    sleep 1; echo "hw connect"
+    sleep 3; echo "hw settings bleclearbonds --force"
+    sleep 2; echo "hw settings store"
+    sleep 1; echo "exit"
+} | timeout 12 chameleon-cli 2>&1) || true
+if echo "$OUTPUT" | grep -qi "Successfully clear"; then
+    echo "  Bonds cleared"
+else
+    echo "  WARNING: bond clear may have failed"
+fi
+if echo "$OUTPUT" | grep -qi "Store success"; then
+    echo "  Settings stored"
+fi
 sleep 1
 
 # 3. Reset USB adapter back to hci0
 echo "[3/6] Resetting BT adapter..."
-CURRENT_HCI=$(hciconfig -a 2>&1 | grep "^hci" | head -1 | cut -d: -f1)
-echo "  Current adapter: ${CURRENT_HCI:-none}"
-usbreset "$BT_USB_ID" 2>&1 | grep -v "^$" || true
+CURRENT_HCI=$(hciconfig -a 2>&1 | grep "^hci" | head -1 | cut -d: -f1 || true)
+echo "  Before: ${CURRENT_HCI:-none}"
+usbreset "$BT_USB_ID" 2>&1 || true
 sleep 3
-NEW_HCI=$(hciconfig -a 2>&1 | grep "^hci" | head -1 | cut -d: -f1)
-echo "  Adapter after reset: ${NEW_HCI:-none}"
 
 # 4. Restart bluetooth service
 echo "[4/6] Restarting bluetooth service..."
@@ -36,18 +51,43 @@ sleep 2
 
 # 5. Verify adapter state
 echo "[5/6] Verifying adapter..."
-HCI=$(hciconfig -a 2>&1 | grep "^hci" | head -1 | cut -d: -f1)
-echo "  Adapter: $HCI"
-if [ "$HCI" != "hci0" ]; then
-    echo "  WARNING: adapter is $HCI, not hci0"
+HCI=$(hciconfig -a 2>&1 | grep "^hci" | head -1 | cut -d: -f1 || true)
+echo "  Adapter: ${HCI:-NOT FOUND}"
+if [ "${HCI:-}" != "hci0" ]; then
+    echo "  ERROR: adapter is ${HCI:-missing}, not hci0"
+    exit 1
 fi
 
-# 6. Wake device and verify it's advertising
-echo "[6/6] Waking device and scanning..."
-chameleon-cli -c "hw connect" 2>&1 | grep -i "connected" || echo "  WARNING: could not wake device via USB"
-sleep 2
-timeout 5 bluetoothctl scan on 2>&1 | grep -c "$DEVICE_ADDR" | xargs -I{} echo "  Device found: {} times" || echo "  WARNING: device not found in scan"
+# 6. Wake device via USB, toggle pairing to force fresh BLE advertising
+echo "[6/6] Waking device and restarting BLE advertising..."
+usbreset 6868:8686 2>&1 || true
+sleep 3
+({
+    sleep 1; echo "hw connect"
+    sleep 3; echo "hw settings blepair -d"
+    sleep 1; echo "hw settings blepair -e"
+    sleep 1; echo "hw settings store"
+    sleep 1; echo "exit"
+} | timeout 15 chameleon-cli 2>&1) || true
+# USB reset to force BLE stack restart with clean state, then wake via USB
+usbreset 6868:8686 2>&1 || true
+sleep 3
+({
+    sleep 1; echo "hw connect"
+    sleep 2; echo "exit"
+} | timeout 8 chameleon-cli 2>&1) || true
+sleep 3
+
+# Verify device is advertising
+echo "  Scanning for device..."
+SCAN_COUNT=$(bluetoothctl --timeout 5 scan on 2>&1 | grep -c "$DEVICE_ADDR" || true)
+if [ "$SCAN_COUNT" -gt 0 ]; then
+    echo "  Device found ($SCAN_COUNT times)"
+else
+    echo "  ERROR: device not advertising after 8s scan"
+    exit 1
+fi
 
 echo ""
 echo "=== Reset complete ==="
-echo "Both sides cleared. Device should be ready for fresh pairing."
+echo "Adapter: hci0, bonds cleared, device advertising."
