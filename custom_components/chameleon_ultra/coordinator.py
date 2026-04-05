@@ -154,9 +154,6 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             pair=needs_pair,
         )
 
-        # Set MTU before connect so bleak uses it during service resolution
-        self._client._backend._mtu_size = 247
-
         try:
             await self._client.connect()
         except Exception:
@@ -168,11 +165,11 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._client = None
             raise
 
-        _LOGGER.info(
-            "Connected to %s, MTU=%s",
-            self.address,
-            self._client.mtu_size,
-        )
+        # ChameleonUltra negotiates 247-byte MTU at the link layer.
+        # Must set before any access to mtu_size to suppress bleak warning.
+        self._client._backend._mtu_size = 247
+
+        _LOGGER.info("Connected to %s, MTU=%s", self.address, self._client.mtu_size)
 
         self._device = ChameleonUltraDevice(self._client)
         try:
