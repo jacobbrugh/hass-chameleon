@@ -180,6 +180,14 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.exception(
                 "Failed to start NUS notifications on %s", self.address
             )
+            # 0x0e (Unlikely Error) on AcquireNotify usually means the
+            # encryption isn't established — stale bond (PC has keys but
+            # device doesn't). Clear the bond so next attempt re-pairs.
+            try:
+                await self._client.unpair()
+                _LOGGER.info("Cleared stale bond for %s", self.address)
+            except Exception:
+                _LOGGER.debug("unpair failed", exc_info=True)
             raise
 
         _LOGGER.info("ChameleonUltra %s ready (MTU=%s)", self.address, self._client.mtu_size)
