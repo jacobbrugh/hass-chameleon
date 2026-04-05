@@ -175,16 +175,10 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             needs_pair,
         )
 
-        # Acquire MTU via bleak's backend (per bleak/examples/mtu_size.py)
-        try:
-            await self._client._backend._acquire_mtu()
-        except Exception:
-            _LOGGER.warning(
-                "Failed to acquire MTU for %s, using default %s",
-                self.address,
-                self._client.mtu_size,
-                exc_info=True,
-            )
+        # The ChameleonUltra negotiates 247-byte MTU at the link layer.
+        # Set it directly — _acquire_mtu() uses AcquireWrite which conflicts
+        # with subsequent WriteValue calls on reconnects.
+        self._client._backend._mtu_size = 247
 
         self._device = ChameleonUltraDevice(self._client)
         try:
