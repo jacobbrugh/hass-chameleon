@@ -17,10 +17,6 @@ from datetime import timedelta
 from typing import Any
 
 from bleak import BleakClient
-from bleak_retry_connector import (
-    BleakClientWithServiceCache,
-    establish_connection,
-)
 from dbus_fast.aio import MessageBus
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
@@ -151,34 +147,32 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("ChameleonUltra %s already paired", self.address)
 
         self._expected_disconnect = False
+        self._client = BleakClient(
+            ble_device,
+            disconnected_callback=self._on_disconnect,
+            timeout=30.0,
+            pair=needs_pair,
+        )
+
+        # Set MTU before connect so bleak uses it during service resolution
+        self._client._backend._mtu_size = 247
+
         try:
-            self._client = await establish_connection(
-                BleakClientWithServiceCache,
-                ble_device,
-                self.address,
-                disconnected_callback=self._on_disconnect,
-                max_attempts=3,
-                pair=needs_pair,
-            )
+            await self._client.connect()
         except Exception:
             _LOGGER.exception(
-                "Failed to establish BLE connection to %s (pair=%s)",
+                "Failed to connect to %s (pair=%s)",
                 self.address,
                 needs_pair,
             )
+            self._client = None
             raise
 
         _LOGGER.info(
-            "Connected to %s, MTU=%s, paired=%s",
+            "Connected to %s, MTU=%s",
             self.address,
             self._client.mtu_size,
-            needs_pair,
         )
-
-        # The ChameleonUltra negotiates 247-byte MTU at the link layer.
-        # Set it directly — _acquire_mtu() uses AcquireWrite which conflicts
-        # with subsequent WriteValue calls on reconnects.
-        self._client._backend._mtu_size = 247
 
         self._device = ChameleonUltraDevice(self._client)
         try:
