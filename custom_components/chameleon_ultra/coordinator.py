@@ -41,7 +41,7 @@ from .protocol import ProtocolError
 
 _LOGGER = logging.getLogger(__name__)
 
-POLL_INTERVAL = timedelta(seconds=60)
+POLL_INTERVAL = timedelta(seconds=1)
 
 
 class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
