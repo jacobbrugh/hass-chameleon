@@ -193,7 +193,13 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Stop NFC sensing so the device doesn't respond to readers until
         # explicitly triggered (e.g. unlock button). This toggles the NFCT/LF
         # peripherals without touching slot config or active slot.
-        await self._device.set_emulation_sense(False)
+        _LOGGER.info("Disabling emulation sensing on connect...")
+        try:
+            await self._device.set_emulation_sense(False)
+            _LOGGER.info("Emulation sensing disabled successfully")
+        except Exception:
+            _LOGGER.error("Failed to disable emulation sensing", exc_info=True)
+            raise
 
         _LOGGER.info("ChameleonUltra %s ready (MTU=%s)", self.address, self._client.mtu_size)
         return self._device

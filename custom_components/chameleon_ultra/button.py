@@ -52,28 +52,38 @@ class ChameleonUltraUnlockButton(ChameleonUltraEntity, ButtonEntity):
         active_slot = self.coordinator.data.get("active_slot", 0)
 
         _LOGGER.info(
-            "Unlock triggered: slot=%d, hold_time=%.1fs", active_slot, hold_time
+            "Unlock: slot=%d hold=%.1fs — sending SENSE ON", active_slot, hold_time
         )
 
         try:
             # Atomic sequence under the command lock: sense on → wait → sense off
             async with device._command_lock:
-                await device._send_locked(
+                resp = await device._send_locked(
                     cmd=Command.SET_EMULATION_SENSE,
                     data=bytes([0x01]),
                 )
+                _LOGGER.info(
+                    "Unlock: SENSE ON response: cmd=%s status=%s data=%s",
+                    resp.cmd, resp.status, resp.data.hex() if resp.data else "empty",
+                )
+                _LOGGER.info("Unlock: emulation active, waiting %.1fs", hold_time)
                 await asyncio.sleep(hold_time)
-                await device._send_locked(
+                resp = await device._send_locked(
                     cmd=Command.SET_EMULATION_SENSE,
                     data=bytes([0x00]),
                 )
+                _LOGGER.info(
+                    "Unlock: SENSE OFF response: cmd=%s status=%s data=%s",
+                    resp.cmd, resp.status, resp.data.hex() if resp.data else "empty",
+                )
         except Exception:
-            _LOGGER.warning(
-                "Unlock sequence interrupted — device will auto-disable "
-                "emulation when BLE connection drops (~5s)",
+            _LOGGER.error(
+                "Unlock FAILED — exception during emulation cycle",
                 exc_info=True,
             )
             raise
+
+        _LOGGER.info("Unlock: cycle complete")
 
         # Refresh coordinator state to reflect the enable/disable
         await self.coordinator.async_request_refresh()
