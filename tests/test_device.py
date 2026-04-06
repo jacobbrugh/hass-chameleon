@@ -390,9 +390,9 @@ class TestHighLevelCommands:
         # Verify the payload sent
         call_args = client.write_gatt_char.call_args_list[0]
         sent_frame = bytes(call_args[0][1])
-        # The data payload should be [slot=0, sense=1, enable=1]
+        # The data payload should be [slot=0, sense=HF(2), enable=1]
         # Data starts at byte 9 in the frame
-        assert sent_frame[9:12] == b"\x00\x01\x01"
+        assert sent_frame[9:12] == b"\x00\x02\x01"
 
     @pytest.mark.asyncio
     async def test_get_enabled_slots(self) -> None:

@@ -79,8 +79,8 @@ class Status(IntEnum):
 class SenseType(IntEnum):
     """NFC sense type (frequency band)."""
 
-    HF = 0x01  # 13.56 MHz
-    LF = 0x02  # 125 kHz
+    LF = 0x01  # 125 kHz  (TAG_SENSE_LF in firmware)
+    HF = 0x02  # 13.56 MHz (TAG_SENSE_HF in firmware)
 
 
 class DeviceMode(IntEnum):
