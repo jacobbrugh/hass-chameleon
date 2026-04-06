@@ -30,7 +30,6 @@ from .const import (
     DOMAIN,
     NUS_TX_CHAR_UUID,
     SLOT_COUNT,
-    SenseType,
 )
 from .device import ChameleonTimeoutError, ChameleonUltraDevice
 from .pairing import (
@@ -191,10 +190,10 @@ class ChameleonUltraCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.debug("unpair failed", exc_info=True)
             raise
 
-        # Disable HF emulation on all slots so the device doesn't respond
-        # to NFC readers until explicitly triggered (e.g. unlock button).
-        for slot_idx in range(SLOT_COUNT):
-            await self._device.set_slot_enable(slot_idx, SenseType.HF, False)
+        # Stop NFC sensing so the device doesn't respond to readers until
+        # explicitly triggered (e.g. unlock button). This toggles the NFCT/LF
+        # peripherals without touching slot config or active slot.
+        await self._device.set_emulation_sense(False)
 
         _LOGGER.info("ChameleonUltra %s ready (MTU=%s)", self.address, self._client.mtu_size)
         return self._device

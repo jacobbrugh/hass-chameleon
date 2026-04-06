@@ -59,6 +59,7 @@ class MockChameleon:
         # Device state
         self.active_slot: int = 0
         self.device_mode: int = DeviceMode.EMULATOR
+        self.sensing: bool = True
         self.battery_voltage: int = 4200
         self.battery_pct: int = 85
         self.firmware: str = "v2.0.0-test"
@@ -193,6 +194,10 @@ class MockChameleon:
             return build_frame(cmd)
 
         if cmd == Command.SAVE_SETTINGS:
+            return build_frame(cmd)
+
+        if cmd == Command.SET_EMULATION_SENSE:
+            self.sensing = bool(data[0])
             return build_frame(cmd)
 
         # -- Emulation data ----------------------------------------------
@@ -345,42 +350,44 @@ async def test_poll_cycle_reads_all_device_state(
 
 
 # ---------------------------------------------------------------------------
-# Unlock button — enable HF → hold → disable HF (atomic under lock)
+# Unlock button — sense on → hold → sense off (atomic under lock)
 # ---------------------------------------------------------------------------
 
 
 async def test_unlock_sequence(
     chameleon: MockChameleon, device: ChameleonUltraDevice
 ) -> None:
-    """The unlock button enables HF on the active slot, holds, then disables.
+    """The unlock button enables sensing, holds, then disables.
 
-    Verify the exact command sequence and that device state transitions
-    correctly.
+    Uses SET_EMULATION_SENSE which toggles NFCT/LF peripherals without
+    touching slot config or active slot.
     """
-    assert chameleon.slot_enabled[0]["hf_enabled"] is True  # starts enabled
+    assert chameleon.sensing is True  # starts with sensing on
 
-    # Simulate what button.py does: atomic enable → sleep → disable
+    # Simulate what button.py does: atomic sense on → sleep → sense off
     async with device._command_lock:
         await device._send_locked(
-            Command.SET_SLOT_ENABLE, bytes([0, SenseType.HF, 1])
+            Command.SET_EMULATION_SENSE, bytes([0x01])
         )
         await asyncio.sleep(0.01)  # shortened hold for test
         await device._send_locked(
-            Command.SET_SLOT_ENABLE, bytes([0, SenseType.HF, 0])
+            Command.SET_EMULATION_SENSE, bytes([0x00])
         )
 
-    # Verify command sequence is exactly enable then disable
-    enable_disable = [
+    # Verify command sequence
+    sense_cmds = [
         (f.cmd, f.data) for f in chameleon.command_log
-        if f.cmd == Command.SET_SLOT_ENABLE
+        if f.cmd == Command.SET_EMULATION_SENSE
     ]
-    assert enable_disable == [
-        (Command.SET_SLOT_ENABLE, bytes([0, SenseType.HF, 1])),
-        (Command.SET_SLOT_ENABLE, bytes([0, SenseType.HF, 0])),
+    assert sense_cmds == [
+        (Command.SET_EMULATION_SENSE, bytes([0x01])),
+        (Command.SET_EMULATION_SENSE, bytes([0x00])),
     ]
 
-    # Device state: HF disabled after sequence
-    assert chameleon.slot_enabled[0]["hf_enabled"] is False
+    # Device state: sensing off, but slot config untouched
+    assert chameleon.sensing is False
+    assert chameleon.slot_enabled[0]["hf_enabled"] is True  # config unchanged
+    assert chameleon.active_slot == 0  # active slot unchanged
 
 
 # ---------------------------------------------------------------------------

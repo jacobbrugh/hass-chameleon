@@ -272,6 +272,17 @@ class ChameleonUltraDevice:
         """Persist device settings to flash."""
         await self.send_command(Command.SAVE_SETTINGS)
 
+    async def set_emulation_sense(self, enable: bool) -> None:
+        """Toggle NFC/LF sensing without changing slot config or active slot.
+
+        When enabled, calls tag_emulation_sense_run() in firmware which
+        starts sensing per the current slot config. When disabled, calls
+        tag_emulation_sense_end() which stops all sensing peripherals.
+        """
+        await self.send_command(
+            Command.SET_EMULATION_SENSE, bytes([int(enable)])
+        )
+
     # ------------------------------------------------------------------
     # Emulation data commands
     # ------------------------------------------------------------------
