@@ -77,7 +77,11 @@ class Status(IntEnum):
 
 
 class SenseType(IntEnum):
-    """NFC sense type (frequency band)."""
+    """NFC sense type (frequency band).
+
+    Values must match firmware tag_sense_type_t in tag_base_type.h:
+    TAG_SENSE_NO=0, TAG_SENSE_LF=1, TAG_SENSE_HF=2.
+    """
 
     LF = 0x01  # 125 kHz  (TAG_SENSE_LF in firmware)
     HF = 0x02  # 13.56 MHz (TAG_SENSE_HF in firmware)
